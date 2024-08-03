@@ -1,0 +1,280 @@
+#include <Wire.h>
+#include <Servo.h>
+
+// Define motor pins
+#define MOTOR_FRONT_LEFT_PIN 3
+#define MOTOR_FRONT_RIGHT_PIN 5
+#define MOTOR_REAR_LEFT_PIN 6
+#define MOTOR_REAR_RIGHT_PIN 9
+
+// Define sensor pins for MPU6050
+#define MPU6050_ADDR 0x68
+#define MPU6050_CLK 400000 // 400kHz
+
+// Servo objects for motors
+Servo motorFrontLeft;
+Servo motorFrontRight;
+Servo motorRearLeft;
+Servo motorRearRight;
+
+// Variables for motor speeds
+int motorSpeedFrontLeft = 1000;
+int motorSpeedFrontRight = 1000;
+int motorSpeedRearLeft = 1000;
+int motorSpeedRearRight = 1000;
+
+// MPU6050 variables
+int16_t gyro_x, gyro_y, gyro_z, acc_x, acc_y, acc_z;
+float angle_pitch, angle_roll;
+float gyro_pitch, gyro_roll;
+float acc_pitch, acc_roll;
+
+// PID variables for pitch and roll
+float kp_pitch = 2.0, ki_pitch = 0.01, kd_pitch = 0.2;
+float kp_roll = 2.0, ki_roll = 0.01, kd_roll = 0.2;
+float error_pitch_prev = 0, error_roll_prev = 0;
+float error_pitch_sum = 0, error_roll_sum = 0;
+
+// ESC calibration parameters
+int ESC_MIN = 1000;
+int ESC_MAX = 2000;
+int ESC_CALIBRATION_DELAY = 5000; // 5 seconds
+
+void setup() {
+  // Initialize serial communication for USB (debugging)
+  Serial.begin(9600);
+  Serial.println("Serial communication initialized.");
+
+  // Initialize I2C communication for MPU6050
+  Wire.begin();
+  Wire.beginTransmission(MPU6050_ADDR);
+  Wire.write(0x6B);
+  Wire.write(0);
+  Wire.endTransmission(true);
+
+  // Attach servo motors
+  motorFrontLeft.attach(MOTOR_FRONT_LEFT_PIN);
+  motorFrontRight.attach(MOTOR_FRONT_RIGHT_PIN);
+  motorRearLeft.attach(MOTOR_REAR_LEFT_PIN);
+  motorRearRight.attach(MOTOR_REAR_RIGHT_PIN);
+
+  // Calibrate ESCs
+  calibrateESC();
+
+  // Calibrate accelerometer
+  calibrateAccelerometer();
+
+  // Delay for sensor stabilization
+  delay(1000);
+}
+
+void loop() {
+  // Read incoming commands from Bluetooth serial
+  if (Serial.available() > 0) {
+    char command = Serial.read();
+
+    switch(command) {
+      case 'f':
+        // Forward command: increase motor speeds
+        increaseMotorSpeeds();
+        break;
+      case 'b':
+        // Backward command: decrease motor speeds
+        decreaseMotorSpeeds();
+        break;
+      case 'l':
+        // Left command: adjust roll/pitch to turn left
+        adjustRollPitchLeft();
+        break;
+      case 'r':
+        // Right command: adjust roll/pitch to turn right
+        adjustRollPitchRight();
+        break;
+      case 's':
+        // Stop command: stop all motors
+        stopMotors();
+        break;
+      default:
+        // Invalid command
+        Serial.println("Invalid command received.");
+    }
+  }
+
+  // Read MPU6050 sensor values
+  readMPU6050();
+
+  // Calculate angles
+  calculateAngles();
+
+  // Perform PID control for stabilization
+  pidControl();
+
+  // Apply motor speeds
+  motorFrontLeft.writeMicroseconds(motorSpeedFrontLeft);
+  motorFrontRight.writeMicroseconds(motorSpeedFrontRight);
+  motorRearLeft.writeMicroseconds(motorSpeedRearLeft);
+  motorRearRight.writeMicroseconds(motorSpeedRearRight);
+
+  // Print angles for debugging
+  Serial.print("Pitch: ");
+  Serial.print(angle_pitch);
+  Serial.print(" Roll: ");
+  Serial.println(angle_roll);
+
+  // Print motor speeds
+  Serial.print("Motor Speeds - FL: ");
+  Serial.print(motorSpeedFrontLeft);
+  Serial.print(" FR: ");
+  Serial.print(motorSpeedFrontRight);
+  Serial.print(" RL: ");
+  Serial.print(motorSpeedRearLeft);
+  Serial.print(" RR: ");
+  Serial.println(motorSpeedRearRight);
+
+  delay(20); // Adjust delay as needed
+}
+
+void calibrateESC() {
+  // Calibrate ESCs by setting minimum and maximum throttle values
+  Serial.println("ESC Calibration started. Ensure props are removed.");
+
+  // Send minimum throttle to all motors
+  motorFrontLeft.writeMicroseconds(ESC_MIN);
+  motorFrontRight.writeMicroseconds(ESC_MIN);
+  motorRearLeft.writeMicroseconds(ESC_MIN);
+  motorRearRight.writeMicroseconds(ESC_MIN);
+
+  delay(ESC_CALIBRATION_DELAY);
+
+  // Send maximum throttle to all motors
+  motorFrontLeft.writeMicroseconds(ESC_MAX);
+  motorFrontRight.writeMicroseconds(ESC_MAX);
+  motorRearLeft.writeMicroseconds(ESC_MAX);
+  motorRearRight.writeMicroseconds(ESC_MAX);
+
+  delay(ESC_CALIBRATION_DELAY);
+
+  // Return motors to idle speed
+  motorFrontLeft.writeMicroseconds(1000);
+  motorFrontRight.writeMicroseconds(1000);
+  motorRearLeft.writeMicroseconds(1000);
+  motorRearRight.writeMicroseconds(1000);
+
+  Serial.println("ESC Calibration complete.");
+}
+
+void readMPU6050() {
+  // Read accelerometer and gyro data from MPU6050
+  Wire.beginTransmission(MPU6050_ADDR);
+  Wire.write(0x3B);
+  Wire.endTransmission(false);
+  Wire.requestFrom(MPU6050_ADDR, 14, true);
+
+  while (Wire.available() < 14);
+
+  acc_x = Wire.read() << 8 | Wire.read();
+  acc_y = Wire.read() << 8 | Wire.read();
+  acc_z = Wire.read() << 8 | Wire.read();
+  gyro_x = Wire.read() << 8 | Wire.read();
+  gyro_y = Wire.read() << 8 | Wire.read();
+  gyro_z = Wire.read() << 8 | Wire.read();
+}
+
+void calculateAngles() {
+  // Calculate pitch and roll angles using sensor data
+  acc_pitch = atan2(acc_y, acc_z) * 180.0 / PI;
+  acc_roll = atan2(-acc_x, acc_z) * 180.0 / PI;
+
+  gyro_pitch = gyro_x / 131.0;
+  gyro_roll = gyro_y / 131.0;
+
+  angle_pitch = 0.98 * (angle_pitch + gyro_pitch * 0.02) + 0.02 * acc_pitch;
+  angle_roll = 0.98 * (angle_roll + gyro_roll * 0.02) + 0.02 * acc_roll;
+}
+
+void pidControl() {
+  // PID control for pitch stabilization
+  float error_pitch = 0 - angle_pitch; // Adjust 0 to desired pitch angle
+  error_pitch_sum += error_pitch;
+  
+  float pid_pitch = kp_pitch * error_pitch + ki_pitch * error_pitch_sum + kd_pitch * (error_pitch - error_pitch_prev);
+  error_pitch_prev = error_pitch;
+
+  // PID control for roll stabilization
+  float error_roll = 0 - angle_roll; // Adjust 0 to desired roll angle
+  error_roll_sum += error_roll;
+  
+  float pid_roll = kp_roll * error_roll + ki_roll * error_roll_sum + kd_roll * (error_roll - error_roll_prev);
+  error_roll_prev = error_roll;
+
+  // Adjust motor speeds based on PID output
+  motorSpeedFrontLeft = 1000 + pid_pitch + pid_roll;
+  motorSpeedFrontRight = 1000 + pid_pitch - pid_roll;
+  motorSpeedRearLeft = 1000 - pid_pitch + pid_roll;
+  motorSpeedRearRight = 1000 - pid_pitch - pid_roll;
+
+  // Constrain motor speeds within calibrated limits
+  motorSpeedFrontLeft = constrain(motorSpeedFrontLeft, ESC_MIN, ESC_MAX);
+  motorSpeedFrontRight = constrain(motorSpeedFrontRight, ESC_MIN, ESC_MAX);
+  motorSpeedRearLeft = constrain(motorSpeedRearLeft, ESC_MIN, ESC_MAX);
+  motorSpeedRearRight = constrain(motorSpeedRearRight, ESC_MIN, ESC_MAX);
+}
+
+// Function to calibrate accelerometer offsets
+void calibrateAccelerometer() {
+  int16_t acc_x_sum = 0, acc_y_sum = 0, acc_z_sum = 0;
+  const int numSamples = 100;
+
+  // Read accelerometer values over multiple samples
+  for (int i = 0; i < numSamples; ++i) {
+    readMPU6050(); // Read MPU6050 data
+
+    acc_x_sum += acc_x;
+    acc_y_sum += acc_y;
+    acc_z_sum += acc_z;
+
+    delay(10); // Adjust delay as needed
+  }
+
+  // Calculate average accelerometer values
+  int16_t acc_x_offset = acc_x_sum / numSamples;
+  int16_t acc_y_offset = acc_y_sum / numSamples;
+  int16_t acc_z_offset = acc_z_sum / numSamples;
+
+  // Apply offsets to accelerometer readings
+  acc_x -= acc_x_offset;
+  acc_y -= acc_y_offset;
+  acc_z -= acc_z_offset;
+}
+
+// Example command handling functions
+void increaseMotorSpeeds() {
+  motorSpeedFrontLeft += 50;
+  motorSpeedFrontRight += 50;
+  motorSpeedRearLeft += 50;
+  motorSpeedRearRight += 50;
+}
+
+void decreaseMotorSpeeds() {
+  motorSpeedFrontLeft -= 50;
+  motorSpeedFrontRight -= 50;
+  motorSpeedRearLeft -= 50;
+  motorSpeedRearRight -= 50;
+}
+
+void adjustRollPitchLeft() {
+  // Adjust roll and pitch for left turn
+  angle_roll -= 5; // Example adjustment, adjust as needed
+}
+
+void adjustRollPitchRight() {
+  // Adjust roll and pitch for right turn
+  angle_roll += 5; // Example adjustment, adjust as needed
+}
+
+void stopMotors() {
+  motorSpeedFrontLeft = 1000;
+  motorSpeedFrontRight = 1000;
+  motorSpeedRearLeft = 1000;
+  motorSpeedRearRight = 1000;
+}
