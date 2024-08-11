@@ -1,0 +1,54 @@
+#include <Wire.h>
+#include <SoftwareSerial.h>
+#include <Servo.h> // Include the Servo library
+
+
+
+int ESCout_1 = 5, ESCout_2 = 6, ESCout_3 = 7, ESCout_4 = 8;
+
+Servo esc1; 
+Servo esc2;
+Servo esc3;
+Servo esc4;
+
+void setup() {
+
+  esc1.attach(ESCout_1);
+  esc2.attach(ESCout_2);
+  esc3.attach(ESCout_3);
+  esc4.attach(ESCout_4);
+
+  // ESC Calibration
+  calibrateESC();
+}
+
+void calibrateESC() {
+  Serial.println("Calibrating ESC...");
+
+  // Send minimum signal to all ESCs
+  esc1.writeMicroseconds(1000);
+  esc2.writeMicroseconds(1000);
+  esc3.writeMicroseconds(1000);
+  esc4.writeMicroseconds(1000);
+  delay(2000); // Wait for ESCs to initialize
+
+  // Send maximum signal to all ESCs
+  esc1.writeMicroseconds(2000);
+  esc2.writeMicroseconds(2000);
+  esc3.writeMicroseconds(2000);
+  esc4.writeMicroseconds(2000);
+  delay(2000); // Wait for ESCs to calibrate
+
+  // Set ESCs to neutral
+  esc1.writeMicroseconds(1050);
+  esc2.writeMicroseconds(1050);
+  esc3.writeMicroseconds(1050);
+  esc4.writeMicroseconds(1050);
+  Serial.println("Calibrating Done");
+}
+
+void loop() {
+
+
+}
+
