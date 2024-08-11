@@ -1,0 +1,252 @@
+#include <Wire.h>
+#include <SoftwareSerial.h>
+
+// Create a software serial port for Bluetooth communication
+SoftwareSerial BTSerial(10, 11); // RX, TX
+
+char packet[7];
+boolean recvState;
+
+// ESC and PID variables
+int ESCout_1, ESCout_2, ESCout_3, ESCout_4;
+int input_PITCH = 50;
+int input_ROLL = 50;
+int input_YAW;
+int input_THROTTLE = 1100;
+int state1, state2, state3, state4;
+
+int16_t gyro_x, gyro_y, gyro_z, acc_x, acc_y, acc_z, temperature, acc_total_vector;
+float angle_pitch, angle_roll, angle_yaw;
+boolean set_gyro_angles;
+float angle_roll_acc, angle_pitch_acc;
+float angle_pitch_output, angle_roll_output;
+float elapsedTime;
+long Time, timePrev, time2;
+long gyro_x_cal, gyro_y_cal, gyro_z_cal;
+
+float pitch_PID, roll_PID, yaw_PID;
+float roll_error, roll_previous_error, pitch_error, pitch_previous_error, yaw_error;
+float roll_pid_p, roll_pid_d, roll_pid_i, pitch_pid_p, pitch_pid_i, pitch_pid_d, yaw_pid_p, yaw_pid_i;
+float roll_desired_angle, pitch_desired_angle, yaw_desired_angle;
+double twoX_kp = 5;
+double twoX_ki = 0.003;
+double twoX_kd = 2;
+double yaw_kp = 3;
+double yaw_ki = 0.002;
+
+void setup() {
+  // Initialize pins
+  pinMode(9, OUTPUT); // Use pin 9 to output ESC signals
+
+  // Initialize serial communication
+  Serial.begin(115200);
+  BTSerial.begin(9600); // Bluetooth serial at 9600 baud
+
+  // Initialize I2C
+  Wire.begin();
+  Wire.setClock(400000);
+  Wire.beginTransmission(0x68); // MPU6050 address
+  Wire.write(0x6B); // Power management 1
+  Wire.write(0x00); // Wake up the MPU6050
+  Wire.endTransmission();
+  Wire.beginTransmission(0x68); // MPU6050 address
+  Wire.write(0x1C); // Accelerometer configuration
+  Wire.write(0x10); // Set ±8g range
+  Wire.endTransmission();
+  Wire.beginTransmission(0x68); // MPU6050 address
+  Wire.write(0x1B); // Gyroscope configuration
+  Wire.write(0x08); // Set ±500°/s range
+  Wire.endTransmission();
+  delay(1000);
+
+  // Calibrate gyroscope
+  for (int cal_int = 0; cal_int < 2000; cal_int++) {
+    if (cal_int % 125 == 0) Serial.print(".");
+    Wire.beginTransmission(0x68); // MPU6050 address
+    Wire.write(0x3B); // Start reading data
+    Wire.endTransmission();
+    Wire.requestFrom(0x68, 14); // Request 14 bytes
+    while (Wire.available() < 14);
+    acc_x = Wire.read() << 8 | Wire.read();
+    acc_y = Wire.read() << 8 | Wire.read();
+    acc_z = Wire.read() << 8 | Wire.read();
+    temperature = Wire.read() << 8 | Wire.read();
+    gyro_x = Wire.read() << 8 | Wire.read();
+    gyro_y = Wire.read() << 8 | Wire.read();
+    gyro_z = Wire.read() << 8 | Wire.read();
+    gyro_x_cal += gyro_x;
+    gyro_y_cal += gyro_y;
+    gyro_z_cal += gyro_z;
+    delay(10);
+  }
+  gyro_x_cal /= 2000;
+  gyro_y_cal /= 2000;
+  gyro_z_cal /= 2000;
+
+  Time = micros();
+}
+
+void loop() {
+  timePrev = Time;
+  Time = micros();
+  elapsedTime = (float)(Time - timePrev) / (float)1000000;
+
+  Wire.beginTransmission(0x68); // MPU6050 address
+  Wire.write(0x3B); // Start reading data
+  Wire.endTransmission();
+  Wire.requestFrom(0x68, 14); // Request 14 bytes
+  while (Wire.available() < 14);
+  acc_x = Wire.read() << 8 | Wire.read();
+  acc_y = Wire.read() << 8 | Wire.read();
+  acc_z = Wire.read() << 8 | Wire.read();
+  temperature = Wire.read() << 8 | Wire.read();
+  gyro_x = Wire.read() << 8 | Wire.read();
+  gyro_y = Wire.read() << 8 | Wire.read();
+  gyro_z = Wire.read() << 8 | Wire.read();
+  gyro_x -= gyro_x_cal;
+  gyro_y -= gyro_y_cal;
+  gyro_z -= gyro_z_cal;
+  angle_pitch += gyro_x * elapsedTime * 0.01526717557;
+  angle_roll += gyro_y * elapsedTime * 0.01526717557;
+  angle_yaw += gyro_z * elapsedTime * 0.01526717557;
+  angle_pitch += angle_roll * sin(gyro_z * 0.000001066);
+  angle_roll -= angle_pitch * sin(gyro_z * 0.000001066);
+  acc_total_vector = sqrt((acc_x * acc_x) + (acc_y * acc_y) + (acc_z * acc_z));
+  angle_pitch_acc = asin((float)acc_y / acc_total_vector) * 57.296;
+  angle_roll_acc = asin((float)acc_x / acc_total_vector) * -57.296;
+  if (set_gyro_angles) {
+    angle_pitch = angle_pitch * 0.9996 + angle_pitch_acc * 0.0004;
+    angle_roll = angle_roll * 0.9996 + angle_roll_acc * 0.0004;
+  } else {
+    angle_pitch = angle_pitch_acc;
+    angle_roll = angle_roll_acc;
+    set_gyro_angles = true;
+  }
+  angle_pitch_output = angle_pitch_output * 0.9 + angle_pitch * 0.1;
+  angle_roll_output = angle_roll_output * 0.9 + angle_roll * 0.1;
+
+  roll_desired_angle = 3 * ((float)input_ROLL / (float)10 - (float)5);
+  pitch_desired_angle = 3 * ((float)input_PITCH / (float)10 - (float)5);
+
+  roll_error = angle_roll_output - roll_desired_angle;
+  pitch_error = angle_pitch_output - pitch_desired_angle;
+  yaw_error = angle_yaw - yaw_desired_angle;
+
+  roll_pid_p = twoX_kp * roll_error;
+  pitch_pid_p = twoX_kp * pitch_error;
+  yaw_pid_p = yaw_kp * yaw_error;
+
+  if (-3 < roll_error && roll_error < 3) roll_pid_i += (twoX_ki * roll_error);
+  if (-3 < pitch_error && pitch_error < 3) pitch_pid_i += (twoX_ki * pitch_error);
+  if (-3 < yaw_error && yaw_error < 3) yaw_pid_i += (yaw_ki * yaw_error);
+
+  roll_pid_d = twoX_kd * ((roll_error - roll_previous_error) / elapsedTime);
+  pitch_pid_d = twoX_kd * ((pitch_error - pitch_previous_error) / elapsedTime);
+  roll_PID = roll_pid_p + roll_pid_i + roll_pid_d;
+  pitch_PID = pitch_pid_p + pitch_pid_i + pitch_pid_d;
+  yaw_PID = yaw_pid_p + yaw_pid_i;
+
+  roll_PID = constrain(roll_PID, -400, 400);
+  pitch_PID = constrain(pitch_PID, -400, 400);
+  yaw_PID = constrain(yaw_PID, -400, 400);
+
+  ESCout_1 = input_THROTTLE - roll_PID - pitch_PID - yaw_PID;
+  ESCout_2 = input_THROTTLE + roll_PID - pitch_PID + yaw_PID;
+  ESCout_3 = input_THROTTLE + roll_PID + pitch_PID - yaw_PID;
+  ESCout_4 = input_THROTTLE - roll_PID + pitch_PID + yaw_PID;
+
+  ESCout_1 = constrain(ESCout_1, 1100, 2000);
+  ESCout_2 = constrain(ESCout_2, 1100, 2000);
+  ESCout_3 = constrain(ESCout_3, 1100, 2000);
+  ESCout_4 = constrain(ESCout_4, 1100, 2000);
+
+  roll_previous_error = roll_error;
+  pitch_previous_error = pitch_error;
+
+  while ((micros() - Time) < 1000);
+  state1 = 1; state2 = 1; state3 = 1; state4 = 1;
+  while (state1 == 1 || state2 == 1 || state3 == 1 || state4 == 1) {
+    time2 = micros();
+    if ((time2 - Time) >= ESCout_1 && state1 == 1) { 
+        digitalWrite(9, LOW);  // ESC signal pin (state1 for ESCout_1)
+        state1 = 0;
+    }
+    if ((time2 - Time) >= ESCout_2 && state2 == 1) { 
+        digitalWrite(9, LOW);  // ESC signal pin (state2 for ESCout_2)
+        state2 = 0;
+    }
+    if ((time2 - Time) >= ESCout_3 && state3 == 1) { 
+        digitalWrite(9, LOW);  // ESC signal pin (state3 for ESCout_3)
+        state3 = 0;
+    }
+    if ((time2 - Time) >= ESCout_4 && state4 == 1) { 
+        digitalWrite(9, LOW);  // ESC signal pin (state4 for ESCout_4)
+        state4 = 0;
+    }
+  }
+
+  // Check for incoming Bluetooth data
+  if (BTSerial.available()) {
+    int index = 0;
+    while (BTSerial.available() && index < 7) {
+      packet[index++] = BTSerial.read();
+    }
+    packet[index] = '\0';  // Null-terminate the packet
+
+    // Parse the packet
+    if (String(packet[0]) == "a") {
+      input_ROLL = int(packet[1]);
+      input_PITCH = int(packet[2]);
+      input_THROTTLE = 1000 + int(packet[3]);
+      input_YAW = int(packet[4]);
+    }
+    else if (String(packet[0]) == "b") {
+      input_ROLL = int(packet[1]);
+      input_PITCH = int(packet[2]);
+      input_THROTTLE = 1000 + int(packet[3]) * 100 + int(packet[4]);
+      input_YAW = int(packet[5]);
+    }
+    else if (String(packet[0]) == "1") {
+      twoX_kp = (float)int(packet[1]) / (float)100;
+      twoX_ki = (float)int(packet[2]) / (float)1000;
+      twoX_kd = (float)int(packet[3]) / (float)100;
+    }
+    else if (String(packet[0]) == "2") {
+      twoX_kp = (float)(int(packet[1]) * 100 + int(packet[2])) / (float)100;
+      twoX_ki = (float)(int(packet[3]) * 100 + int(packet[4])) / (float)1000;
+      twoX_kd = (float)(int(packet[5]) * 100 + int(packet[6])) / (float)100;
+    }
+    // Add other cases as needed
+    Serial.print(input_ROLL); Serial.print(" ");
+    Serial.print(input_THROTTLE); Serial.print(" ");
+    Serial.print(twoX_kp); Serial.print(" ");
+    Serial.print(twoX_ki, 3); Serial.print(" ");
+    Serial.print(twoX_kd); Serial.println();
+  }
+
+  // Handle ESC calibration
+  calibrateESCs();
+}
+
+void calibrateESCs() {
+  Serial.println("Calibrating ESCs...");
+  
+  // Send minimum throttle signal
+  for (int i = 0; i < 4; i++) {
+    digitalWrite(9, LOW); // Minimum signal
+    delay(1000);
+    digitalWrite(9, HIGH); // Turn off
+    delay(2000);
+  }
+  
+  // Send maximum throttle signal
+  for (int i = 0; i < 4; i++) {
+    digitalWrite(9, HIGH); // Maximum signal
+    delay(1000);
+    digitalWrite(9, LOW); // Turn off
+    delay(2000);
+  }
+
+  Serial.println("ESCs calibrated.");
+}
+
