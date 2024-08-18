@@ -1,98 +1,58 @@
 #include <Wire.h>
-#include <math.h>
 
 float RateRoll, RatePitch, RateYaw;
 float AccX, AccY, AccZ;
-float AngleRoll, AnglePitch, AngleYaw;
-float previousTime = 0;
-float currentTime = 0;
-float deltaTime = 0;
-float yawAngle = 0; // Initialize yawAngle
-float gyroXBias = 0.0;
-float gyroYBias = 0.0;
-float gyroZBias = 0.0;
-float alpha = 0.98; // Complementary filter constant
-
-void calibrateGyro() {
-    long sumX = 0;
-    long sumY = 0;
-    long sumZ = 0;
-    int numReadings = 100;
-
-    for (int i = 0; i < numReadings; i++) {
-        Wire.beginTransmission(0x68);
-        Wire.write(0x43); // Register for Gyro X
-        Wire.endTransmission();
-        Wire.requestFrom(0x68, 6);
-        int16_t GyroX = Wire.read() << 8 | Wire.read();
-        int16_t GyroY = Wire.read() << 8 | Wire.read();
-        int16_t GyroZ = Wire.read() << 8 | Wire.read();
-
-        sumX += GyroX;
-        sumY += GyroY;
-        sumZ += GyroZ;
-        delay(10);
-    }
-
-    gyroXBias = (float)sumX / numReadings;
-    gyroYBias = (float)sumY / numReadings;
-    gyroZBias = (float)sumZ / numReadings;
-}
+float AngleRoll, AnglePitch;
 
 void gyro_signals(void) {
+    // Configure the accelerometer
     Wire.beginTransmission(0x68);
-    Wire.write(0x1A);
-    Wire.write(0x05);
+    Wire.write(0x1A); // Configure the accelerometer
+    Wire.write(0x05); // Set the configuration
     Wire.endTransmission();
-    
+
     Wire.beginTransmission(0x68);
-    Wire.write(0x1C);
-    Wire.write(0x10);
+    Wire.write(0x1C); // Set accelerometer full-scale range to ±4g
+    Wire.write(0x10); // Configuration value
     Wire.endTransmission();
-    
+
     Wire.beginTransmission(0x68);
-    Wire.write(0x3B);
+    Wire.write(0x3B); // Start reading from ACCEL_XOUT_H
     Wire.endTransmission();
-    
     Wire.requestFrom(0x68, 6);
-    
+
     int16_t AccXLSB = Wire.read() << 8 | Wire.read();
     int16_t AccYLSB = Wire.read() << 8 | Wire.read();
     int16_t AccZLSB = Wire.read() << 8 | Wire.read();
-    
+
+    // Configure the gyroscope
     Wire.beginTransmission(0x68);
-    Wire.write(0x1B);
-    Wire.write(0x08);
+    Wire.write(0x1B); // Set gyroscope full-scale range to ±500°/s
+    Wire.write(0x08); // Configuration value
     Wire.endTransmission();
-    
+
     Wire.beginTransmission(0x68);
-    Wire.write(0x43);
+    Wire.write(0x43); // Start reading from GYRO_XOUT_H
     Wire.endTransmission();
-    
     Wire.requestFrom(0x68, 6);
-    
+
     int16_t GyroX = Wire.read() << 8 | Wire.read();
     int16_t GyroY = Wire.read() << 8 | Wire.read();
     int16_t GyroZ = Wire.read() << 8 | Wire.read();
-    
-    RateRoll = ((float)GyroX - gyroXBias) / 65.5;
-    RatePitch = ((float)GyroY - gyroYBias) / 65.5;
-    RateYaw = ((float)GyroZ - gyroZBias) / 65.5;
-    
-    AccX = (float)AccXLSB / 4096;
-    AccY = (float)AccYLSB / 4096;
-    AccZ = (float)AccZLSB / 4096;
 
-    AngleRoll = atan(AccY / sqrt(AccX * AccX + AccZ * AccZ)) * (180 / M_PI);
-    AnglePitch = -atan(AccX / sqrt(AccY * AccY + AccZ * AccZ)) * (180 / M_PI);
-    
-    // Update yaw angle using integration of RateYaw
-    currentTime = millis() / 1000.0; // Convert milliseconds to seconds
-    deltaTime = currentTime - previousTime;
-    previousTime = currentTime;
+    // Convert the gyroscope rates to degrees per second
+    RateRoll = (float)GyroX / 65.5;
+    RatePitch = (float)GyroY / 65.5;
+    RateYaw = (float)GyroZ / 65.5;
 
-    yawAngle += RateYaw * deltaTime;
-    AngleYaw = alpha * (AngleYaw + RateYaw * deltaTime) + (1 - alpha) * yawAngle;
+    // Convert the accelerometer readings to g's
+    AccX = (float)AccXLSB / 4096 - 0.05;
+    AccY = (float)AccYLSB / 4096 + 0.01;
+    AccZ = (float)AccZLSB / 4096 - 0.11;
+
+    // Compute roll and pitch angles
+    AngleRoll = atan(AccY / sqrt(AccX * AccX + AccZ * AccZ)) * 180 / 3.142;
+    AnglePitch = -atan(AccX / sqrt(AccY * AccY + AccZ * AccZ)) * 180 / 3.142;
 }
 
 void setup() {
@@ -104,22 +64,16 @@ void setup() {
     delay(250);
 
     Wire.beginTransmission(0x68);
-    Wire.write(0x6B);
-    Wire.write(0x00);
+    Wire.write(0x6B); // Wake up the MPU-6050
+    Wire.write(0x00); // Set the sleep bit to 0
     Wire.endTransmission();
-
-    calibrateGyro(); // Call the calibration function
 }
 
 void loop() {
     gyro_signals();
-    
-    Serial.print("AngleRoll [degrees]= ");
+    Serial.print("Roll angle [°]= ");
     Serial.print(AngleRoll);
-    Serial.print(" AnglePitch [degrees]= ");
-    Serial.print(AnglePitch);
-    Serial.print(" AngleYaw [degrees]= ");
-    Serial.println(AngleYaw);
-    
+    Serial.print(" Pitch angle [°]= ");
+    Serial.println(AnglePitch);
     delay(50);
 }
