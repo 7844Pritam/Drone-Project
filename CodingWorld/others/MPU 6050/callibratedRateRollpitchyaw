@@ -1,0 +1,84 @@
+#include <Wire.h>
+
+// Global variables for storing gyro rates and calibration values
+float RateRoll, RatePitch, RateYaw;
+float RateCalibrationRoll = 0.0, RateCalibrationPitch = 0.0, RateCalibrationYaw = 0.0;
+const int RateCalibrationNumber = 2000; // Number of samples for calibration
+
+// Function to read gyro signals from the MPU6050
+void gyro_signals(void) {
+    Wire.beginTransmission(0x68); // MPU6050 address
+    Wire.write(0x1A); // Register to configure the digital low-pass filter
+    Wire.write(0x05); // Set filter to 200Hz
+    Wire.endTransmission();
+
+    Wire.beginTransmission(0x68);
+    Wire.write(0x1B); // Register to configure gyro sensitivity
+    Wire.write(0x08); // Set full-scale range to ±1000°/s
+    Wire.endTransmission();
+
+    Wire.beginTransmission(0x68);
+    Wire.write(0x43); // Register to start reading gyro data
+    Wire.endTransmission();
+
+    Wire.requestFrom(0x68, 6); // Request 6 bytes of gyro data
+
+    int16_t GyroX = Wire.read() << 8 | Wire.read();
+    int16_t GyroY = Wire.read() << 8 | Wire.read();
+    int16_t GyroZ = Wire.read() << 8 | Wire.read();
+
+    // Convert gyro data to degrees per second
+    RateRoll = (float)GyroX / 65.5;
+    RatePitch = (float)GyroY / 65.5;
+    RateYaw = (float)GyroZ / 65.5;
+}
+
+void setup() {
+    Serial.begin(57600); // Initialize serial communication
+    pinMode(13, OUTPUT); // Set pin 13 as an output
+    digitalWrite(13, HIGH); // Turn on the built-in LED
+
+    Wire.setClock(400000); // Set I2C clock speed to 400kHz
+    Wire.begin(); // Initialize I2C
+
+    delay(250); // Wait for sensor initialization
+
+    // Wake up MPU6050
+    Wire.beginTransmission(0x68);
+    Wire.write(0x6B); // Power management 1 register
+    Wire.write(0x00); // Wake up MPU6050
+    Wire.endTransmission();
+
+    // Calibration loop
+    for (int i = 0; i < RateCalibrationNumber; i++) {
+        gyro_signals();
+        RateCalibrationRoll += RateRoll;
+        RateCalibrationPitch += RatePitch;
+        RateCalibrationYaw += RateYaw;
+        delay(1); // Short delay between samples
+    }
+
+    // Compute average calibration values
+    RateCalibrationRoll /= RateCalibrationNumber;
+    RateCalibrationPitch /= RateCalibrationNumber;
+    RateCalibrationYaw /= RateCalibrationNumber;
+}
+
+void loop() {
+    gyro_signals(); // Read current gyro data
+
+    // Apply calibration
+    RateRoll -= RateCalibrationRoll;
+    RatePitch -= RateCalibrationPitch;
+    RateYaw -= RateCalibrationYaw;
+
+    // Print gyro rates to the serial monitor
+    Serial.print("Roll rate [°/s]= ");
+    Serial.print(RateRoll);
+    Serial.print(" Pitch Rate [°/s]= ");
+    Serial.print(RatePitch);
+    Serial.print(" Yaw Rate [°/s]= ");
+    Serial.println(RateYaw);
+
+    delay(50); // Delay between readings
+}
