@@ -1,0 +1,57 @@
+#include <Wire.h>
+
+float RateRoll, RatePitch, RateYaw;
+
+void gyro_signals(void) {
+    // Configure the gyroscope
+    Wire.beginTransmission(0x68);
+    Wire.write(0x1A); // Register for Digital Low Pass Filter (DLPF) configuration
+    Wire.write(0x05); // Setting for DLPF_CFG = 010 (filter bandwidth 21Hz)
+    Wire.endTransmission();
+
+    Wire.beginTransmission(0x68);
+    Wire.write(0x1B); // Register for Gyro Configuration
+    Wire.write(0x08); // Setting for FS_SEL = 01 (±1000°/s full scale)
+    Wire.endTransmission();
+
+    // Request 6 bytes of data from the gyroscope
+    Wire.beginTransmission(0x68);
+    Wire.write(0x43); // Register address for Gyro data (X, Y, Z)
+    Wire.endTransmission();
+    
+    Wire.requestFrom(0x68, 6);
+    int16_t GyroX = Wire.read() << 8 | Wire.read();
+    int16_t GyroY = Wire.read() << 8 | Wire.read();
+    int16_t GyroZ = Wire.read() << 8 | Wire.read();
+
+    // Convert raw data to degrees per second
+    RateRoll = (float)GyroX / 65.5;
+    RatePitch = (float)GyroY / 65.5;
+    RateYaw = (float)GyroZ / 65.5;
+}
+
+void setup() {
+    Serial.begin(57600);
+    pinMode(13, OUTPUT);
+    digitalWrite(13, HIGH);
+    Wire.setClock(400000); // Set I2C clock speed to 400kHz
+    Wire.begin();
+    delay(250);
+    
+    // Wake up the MPU-6050
+    Wire.beginTransmission(0x68);
+    Wire.write(0x6B); // Power Management 1 register
+    Wire.write(0x00); // Wake up MPU-6050
+    Wire.endTransmission();
+}
+
+void loop() {
+    gyro_signals();
+    Serial.print("Roll rate [°/s]= ");
+    Serial.print(RateRoll);
+    Serial.print(" Pitch Rate [°/s]= ");
+    Serial.print(RatePitch);
+    Serial.print(" Yaw Rate [°/s]= ");
+    Serial.println(RateYaw);
+    delay(50);
+}
