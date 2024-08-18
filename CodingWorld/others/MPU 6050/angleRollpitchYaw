@@ -2,7 +2,11 @@
 
 float RateRoll, RatePitch, RateYaw;
 float AccX, AccY, AccZ;
-float AngleRoll, AnglePitch;
+float AngleRoll, AnglePitch, AngleYaw;
+float previousTime = 0;
+float currentTime = 0;
+float deltaTime = 0;
+float yawAngle = 0; // Initialize yawAngle
 
 void gyro_signals(void) {
     // Configure the accelerometer
@@ -53,6 +57,14 @@ void gyro_signals(void) {
     // Compute roll and pitch angles
     AngleRoll = atan(AccY / sqrt(AccX * AccX + AccZ * AccZ)) * 180 / 3.142;
     AnglePitch = -atan(AccX / sqrt(AccY * AccY + AccZ * AccZ)) * 180 / 3.142;
+
+
+        currentTime = millis() / 1000.0; // Convert milliseconds to seconds
+    deltaTime = currentTime - previousTime;
+    previousTime = currentTime;
+    
+    yawAngle += RateYaw * deltaTime;
+    AngleYaw = yawAngle; // Set the yaw angle to AngleYaw
 }
 
 void setup() {
@@ -74,6 +86,8 @@ void loop() {
     Serial.print("Roll angle [°]= ");
     Serial.print(AngleRoll);
     Serial.print(" Pitch angle [°]= ");
-    Serial.println(AnglePitch);
+    Serial.print(AnglePitch);
+    Serial.print(" Yaw angle [°]= ");
+    Serial.println(AngleYaw);
     delay(50);
 }
